@@ -30,15 +30,30 @@ func CreateLibrary() gin.HandlerFunc {
 
 		// Use the base_path directly as the library path
 		libPath := req.BasePath
-		dbPath := filepath.Join(libPath, "blog.db")
+		blogDbPath := filepath.Join(libPath, "blog.db")
+		configDbPath := filepath.Join(libPath, "config.db")
 		picPath := filepath.Join(libPath, "pic")
 
-		// Only check if the database file exists, not the directory
-		if _, err := os.Stat(dbPath); err == nil {
+		// Check if either database file exists
+		dbExists := false
+
+		// Check for blog.db
+		if _, err := os.Stat(blogDbPath); err == nil {
+			dbExists = true
+		}
+
+		// Check for config.db
+		if !dbExists {
+			if _, err := os.Stat(configDbPath); err == nil {
+				dbExists = true
+			}
+		}
+
+		if dbExists {
 			c.JSON(http.StatusConflict, gin.H{"error": "知识库已存在"})
 			return
 		}
-		
+
 		// If directory exists but no database, that's fine - we'll create the database
 
 		// 创建目录
@@ -48,7 +63,7 @@ func CreateLibrary() gin.HandlerFunc {
 		}
 
 		// 创建 SQLite 数据库并初始化表结构
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite3", blogDbPath)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库创建失败"})
 			return
@@ -68,7 +83,7 @@ func CreateLibrary() gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库表初始化失败"})
 			return
 		}
-		
+
 		// Create config table
 		_, err = db.Exec(`
 			CREATE TABLE IF NOT EXISTS config (
@@ -82,7 +97,7 @@ func CreateLibrary() gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "配置表初始化失败"})
 			return
 		}
-		
+
 		// Insert blog name into config table
 		_, err = db.Exec("INSERT INTO config (name, key, value) VALUES (?, ?, ?)", "blog", "name", req.Name)
 		if err != nil {
@@ -122,36 +137,55 @@ func ListLibraries(basePath string) gin.HandlerFunc {
 		for _, entry := range entries {
 			if entry.IsDir() {
 				libPath := filepath.Join(basePath, entry.Name())
-				dbPath := filepath.Join(libPath, "blog.db")
-				
-				// Check if blog.db exists in this directory
-				if _, err := os.Stat(dbPath); err == nil {
+				blogDbPath := filepath.Join(libPath, "blog.db")
+				configDbPath := filepath.Join(libPath, "config.db")
+
+				// Check if blog.db or config.db exists in this directory
+				dbExists := false
+				dbPath := ""
+
+				// First check for blog.db
+				if _, err := os.Stat(blogDbPath); err == nil {
+					dbExists = true
+					dbPath = blogDbPath
+				}
+
+				// If blog.db doesn't exist, check for config.db
+				if !dbExists {
+					if _, err := os.Stat(configDbPath); err == nil {
+						dbExists = true
+						dbPath = configDbPath
+					}
+				}
+
+				// If either database file exists
+				if dbExists {
 					// Open the database to get the blog name from config
 					db, err := sql.Open("sqlite3", dbPath)
 					if err == nil {
 						defer db.Close()
-						
+
 						// Try to get blog name from config
 						var blogName string
 						row := db.QueryRow("SELECT value FROM config WHERE name = 'blog' AND key = 'name' LIMIT 1")
 						row.Scan(&blogName)
-						
+
 						// If no blog name found, use directory name
 						if blogName == "" {
 							blogName = entry.Name()
 						}
-						
+
 						libraries = append(libraries, map[string]string{
 							"name": blogName,
 							"path": libPath,
-							"dir": entry.Name(),
+							"dir":  entry.Name(),
 						})
 					} else {
 						// Fallback if can't open database
 						libraries = append(libraries, map[string]string{
 							"name": entry.Name(),
 							"path": libPath,
-							"dir": entry.Name(),
+							"dir":  entry.Name(),
 						})
 					}
 				}
@@ -171,7 +205,7 @@ func GetLibraryConfig(docRoot string) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Library name is required"})
 			return
 		}
-		
+
 		// Open connection to the library's database
 		db, err := getLibraryDB(docRoot, libraryName)
 		if err != nil {
@@ -179,7 +213,7 @@ func GetLibraryConfig(docRoot string) gin.HandlerFunc {
 			return
 		}
 		defer db.Close()
-		
+
 		// Query all config entries
 		rows, err := db.Query("SELECT id, name, key, value FROM config")
 		if err != nil {
@@ -187,7 +221,7 @@ func GetLibraryConfig(docRoot string) gin.HandlerFunc {
 			return
 		}
 		defer rows.Close()
-		
+
 		// Build config map
 		config := make(map[string]map[string]string)
 		for rows.Next() {
@@ -196,16 +230,16 @@ func GetLibraryConfig(docRoot string) gin.HandlerFunc {
 			if err := rows.Scan(&id, &name, &key, &value); err != nil {
 				continue
 			}
-			
+
 			// Initialize the map for this name if it doesn't exist
 			if _, ok := config[name]; !ok {
 				config[name] = make(map[string]string)
 			}
-			
+
 			// Add the key-value pair
 			config[name][key] = value
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{"config": config})
 	}
 }
@@ -219,26 +253,26 @@ func UpdateLibraryConfig(docRoot string) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Library name is required"})
 			return
 		}
-		
+
 		// Parse request body
 		type ConfigRequest struct {
 			Name  string `json:"name"`
 			Key   string `json:"key"`
 			Value string `json:"value"`
 		}
-		
+
 		var req ConfigRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		
+
 		// Validate request
 		if req.Name == "" || req.Key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Name and key are required"})
 			return
 		}
-		
+
 		// Open connection to the library's database
 		db, err := getLibraryDB(docRoot, libraryName)
 		if err != nil {
@@ -246,7 +280,7 @@ func UpdateLibraryConfig(docRoot string) gin.HandlerFunc {
 			return
 		}
 		defer db.Close()
-		
+
 		// Check if config exists
 		var count int
 		row := db.QueryRow("SELECT COUNT(*) FROM config WHERE name = ? AND key = ?", req.Name, req.Key)
@@ -254,7 +288,7 @@ func UpdateLibraryConfig(docRoot string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query config"})
 			return
 		}
-		
+
 		var result sql.Result
 		if count > 0 {
 			// Update existing config
@@ -263,12 +297,12 @@ func UpdateLibraryConfig(docRoot string) gin.HandlerFunc {
 			// Insert new config
 			result, err = db.Exec("INSERT INTO config (name, key, value) VALUES (?, ?, ?)", req.Name, req.Key, req.Value)
 		}
-		
+
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update config"})
 			return
 		}
-		
+
 		rowsAffected, _ := result.RowsAffected()
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Config updated successfully",

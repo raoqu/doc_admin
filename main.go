@@ -1,13 +1,8 @@
 package main
 
 import (
-	"log"
-	"os"
-
-	"io/ioutil"
-
-	"gopkg.in/yaml.v2"
-
+	"flag"
+	"fmt"
 	"main/router"
 )
 
@@ -15,25 +10,21 @@ type Config struct {
 	DocRoot string `yaml:"doc_root"`
 }
 
-func loadConfig() Config {
-	data, err := ioutil.ReadFile("config.yaml")
-	if err != nil {
-		log.Fatal("Cannot read config.yaml")
-	}
-	var cfg Config
-	yaml.Unmarshal(data, &cfg)
-	return cfg
-}
-
 func main() {
-	cfg := loadConfig()
-
-	// Ensure the storage directory exists
-	if err := os.MkdirAll(cfg.DocRoot, 0755); err != nil {
-		log.Fatal("Failed to create storage directory:", err)
-	}
-
-	// Initialize router with just the document root path
-	r := router.SetupRouter(nil, cfg.DocRoot)
-	r.Run(":8080")
+	// Define command line flags
+	dirRootFlag := flag.String("dir", ".", "Document root directory path")
+	portFlag := flag.Int("port", 8080, "Port to run the server on")
+	
+	// Parse command line arguments
+	flag.Parse()
+	
+	// Use the provided values
+	dirRoot := *dirRootFlag
+	port := *portFlag
+	
+	fmt.Printf("Starting server with document root: %s on port: %d\n", dirRoot, port)
+	
+	// Initialize router with the document root path
+	r := router.SetupRouter(nil, dirRoot)
+	r.Run(fmt.Sprintf(":%d", port))
 }
