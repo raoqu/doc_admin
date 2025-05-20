@@ -9,14 +9,14 @@ import (
 	"main/models"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // getLibraryDB opens a connection to the specified library's database
 func getLibraryDB(docRoot string, libraryName string) (*sql.DB, error) {
 	libPath := filepath.Join(docRoot, libraryName)
 	dbPath := filepath.Join(libPath, "blog.db")
-	return sql.Open("sqlite3", dbPath)
+	return sql.Open("sqlite", dbPath)
 }
 
 func CreateDocument(docRoot string) gin.HandlerFunc {
@@ -225,11 +225,11 @@ func UpdateDocument(docRoot string) gin.HandlerFunc {
 		}
 		defer db.Close()
 		
-		// Define request structure
+		// Define request structure with pointer for Content to detect if it was provided
 		type UpdateRequest struct {
-			ID      int64  `json:"id"`
-			Title   string `json:"title"`   // Optional
-			Content string `json:"content"` // Optional
+			ID      int64   `json:"id"`
+			Title   string  `json:"title"`   // Optional
+			Content *string `json:"content"` // Pointer allows us to detect if field was provided
 		}
 		
 		var req UpdateRequest
@@ -266,9 +266,11 @@ func UpdateDocument(docRoot string) gin.HandlerFunc {
 			args = append(args, req.Title)
 		}
 		
-		if req.Content != "" {
+		// Check if content field was provided in the request (even if empty)
+		// Using a pointer allows us to detect if the field was included in the JSON
+		if req.Content != nil {
 			updateFields = append(updateFields, "content = ?")
-			args = append(args, req.Content)
+			args = append(args, *req.Content) // Dereference the pointer to get the value
 		}
 		
 		// If no fields to update, return early

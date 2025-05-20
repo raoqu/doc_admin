@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 /*
@@ -31,7 +31,6 @@ func CreateLibrary() gin.HandlerFunc {
 		// Use the base_path directly as the library path
 		libPath := req.BasePath
 		blogDbPath := filepath.Join(libPath, "blog.db")
-		configDbPath := filepath.Join(libPath, "config.db")
 		picPath := filepath.Join(libPath, "pic")
 
 		// Check if either database file exists
@@ -40,13 +39,6 @@ func CreateLibrary() gin.HandlerFunc {
 		// Check for blog.db
 		if _, err := os.Stat(blogDbPath); err == nil {
 			dbExists = true
-		}
-
-		// Check for config.db
-		if !dbExists {
-			if _, err := os.Stat(configDbPath); err == nil {
-				dbExists = true
-			}
 		}
 
 		if dbExists {
@@ -58,14 +50,14 @@ func CreateLibrary() gin.HandlerFunc {
 
 		// 创建目录
 		if err := os.MkdirAll(picPath, 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "目录创建失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "目录创建失败", "details": err.Error(), "path": picPath})
 			return
 		}
 
 		// 创建 SQLite 数据库并初始化表结构
-		db, err := sql.Open("sqlite3", blogDbPath)
+		db, err := sql.Open("sqlite", blogDbPath)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库创建失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库创建失败", "details": err.Error(), "path": blogDbPath})
 			return
 		}
 		defer db.Close()
@@ -80,7 +72,7 @@ func CreateLibrary() gin.HandlerFunc {
 			)
 		`)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库表初始化失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库表初始化失败", "details": err.Error(), "table": "documents", "path": blogDbPath})
 			return
 		}
 
@@ -94,14 +86,14 @@ func CreateLibrary() gin.HandlerFunc {
 			)
 		`)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "配置表初始化失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "配置表初始化失败", "details": err.Error(), "table": "config", "path": blogDbPath})
 			return
 		}
 
 		// Insert blog name into config table
 		_, err = db.Exec("INSERT INTO config (name, key, value) VALUES (?, ?, ?)", "blog", "name", req.Name)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "配置初始化失败"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "配置初始化失败", "details": err.Error(), "operation": "insert config", "path": blogDbPath})
 			return
 		}
 
@@ -138,9 +130,7 @@ func ListLibraries(basePath string) gin.HandlerFunc {
 			if entry.IsDir() {
 				libPath := filepath.Join(basePath, entry.Name())
 				blogDbPath := filepath.Join(libPath, "blog.db")
-				configDbPath := filepath.Join(libPath, "config.db")
 
-				// Check if blog.db or config.db exists in this directory
 				dbExists := false
 				dbPath := ""
 
@@ -150,18 +140,10 @@ func ListLibraries(basePath string) gin.HandlerFunc {
 					dbPath = blogDbPath
 				}
 
-				// If blog.db doesn't exist, check for config.db
-				if !dbExists {
-					if _, err := os.Stat(configDbPath); err == nil {
-						dbExists = true
-						dbPath = configDbPath
-					}
-				}
-
 				// If either database file exists
 				if dbExists {
 					// Open the database to get the blog name from config
-					db, err := sql.Open("sqlite3", dbPath)
+					db, err := sql.Open("sqlite", dbPath)
 					if err == nil {
 						defer db.Close()
 
