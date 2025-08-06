@@ -30,6 +30,9 @@ func CreateLibrary() gin.HandlerFunc {
 
 		// Use the base_path directly as the library path
 		libPath := req.BasePath
+		if libPath == "" {
+			libPath = req.Name // Default path if not provided
+		}
 		blogDbPath := filepath.Join(libPath, "blog.db")
 		picPath := filepath.Join(libPath, "pic")
 
